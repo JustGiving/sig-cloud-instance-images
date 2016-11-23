@@ -1,0 +1,92 @@
+require 'open3'
+require 'fileutils'
+
+#defaults
+if(ENV['HOSTNAME'].nil?)
+	HOSTNAME = ENV['HOSTNAME']
+else
+  HOSTNAME = 'artifactory.justgiving.com'
+end
+
+if(!ENV['GO_PIPELINE_LABEL'].nil?)
+	VERSION = ENV['GO_PIPELINE_LABEL']
+else
+  VERSION = "0.0.1"
+end
+
+if(!ENV['USERNAME'].nil?)
+	USERNAME = ENV['USERNAME']
+else
+  USERNAME = "notset"
+end
+
+if(!ENV['USERNAME'].nil?)
+	PASSWORD = ENV['PASSWORD']
+else
+  PASSWORD = "notset"
+end
+
+TAG = "#{HOSTNAME}/base/centos:#{VERSION}"
+
+module Utils
+  class Subprocess
+    def initialize(cmd, &block)
+      # see: http://stackoverflow.com/a/1162850/83386
+      Open3.popen3(cmd) do |stdin, stdout, stderr, thread|
+        # read each stream from a new thread
+        { :out => stdout, :err => stderr }.each do |key, stream|
+          Thread.new do
+            until (line = stream.gets).nil? do
+              # yield the block depending on the stream
+              if key == :out
+                yield line, nil, thread if block_given?
+              else
+                yield nil, line, thread if block_given?
+              end
+            end
+          end
+        end
+
+        thread.join # don't exit until the external process is done
+        exit_code = thread.value
+		if(exit_code != 0)
+			puts("Failed to execute_cmd #{cmd} exit code: #{exit_code}")
+			Kernel.exit(false)
+		end
+      end
+    end
+  end
+end
+
+def execute_cmd(cmd,chdir=File.dirname(__FILE__))
+	puts("execute_cmd: #{cmd}")	
+	Utils::Subprocess.new cmd do |stdout, stderr, thread|
+  		puts "\t#{stdout}"
+  		if(stderr.nil? == false)
+  			puts "\t#{stderr}"	
+  		end
+	end
+	#puts("finished")
+end
+
+task :default => [:clean,:build,:docker_image,:docker_push] do 
+end
+
+task :clean do 
+  system("docker rm -v $(docker ps -aq -f status=exited)")
+  system("docker rmi -f $(docker images -q -a -f dangling=true)")
+end
+
+task :build do 
+  
+end 
+
+task :docker_image do 	
+  execute_cmd("docker build --no-cache -t #{TAG} .")
+end 
+
+task :docker_push do
+ execute_cmd("docker login -u #{USERNAME} -p #{PASSWORD} #{HOSTNAME}")
+ puts(TAG)
+ execute_cmd("docker push #{TAG} ")
+end
